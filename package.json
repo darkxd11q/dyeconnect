@@ -1,7 +1,7 @@
 {
   "name": "ambisync",
   "version": "1.0.0",
-  "description": "AmbiSync – Ambilight over WebRTC",
+  "description": "AmbiSync – Full-screen Ambilight over WebRTC",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
