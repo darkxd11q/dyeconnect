@@ -29,13 +29,10 @@ body{background:#07070f;color:#fff;font-family:'Segoe UI',sans-serif;height:100v
 .code-box{font-size:2rem;font-weight:800;color:#a78bfa;letter-spacing:6px;padding:.5rem 1rem;background:#0d0d20;border-radius:8px;margin:.4rem 0;font-family:'Courier New',monospace;}
 .inp{background:#0d0d20;border:1px solid #222244;color:#fff;padding:.65rem 1rem;border-radius:8px;width:100%;font-size:1.1rem;margin:.5rem 0;text-align:center;letter-spacing:4px;outline:none;font-family:'Courier New',monospace;text-transform:uppercase;}
 .inp:focus{border-color:#7c6aff;}
-.ws-row{display:flex;gap:.5rem;margin-bottom:.3rem;}
-.ws-inp{background:#0d0d20;border:1px solid #222244;color:#888;padding:.4rem .7rem;border-radius:7px;font-size:.75rem;flex:1;outline:none;}
-.ws-inp:focus{border-color:#555;color:#aaa;}
 /* Ambilight */
-#ambiScreen{position:relative;background:#030308;}
+#sAmbi{position:relative;background:#030308;}
 .ambi-grid{position:absolute;inset:0;display:grid;grid-template-columns:90px 1fr 90px;grid-template-rows:90px 1fr 90px;}
-.edge{display:flex;position:relative;}
+.edge{display:flex;}
 .edge.top,.edge.bottom{flex-direction:row;grid-column:1/4;}
 .edge.left,.edge.right{flex-direction:column;}
 .edge.top{grid-row:1;}.edge.bottom{grid-row:3;}
@@ -44,7 +41,7 @@ body{background:#07070f;color:#fff;font-family:'Segoe UI',sans-serif;height:100v
 .seg{flex:1;transition:background-color 40ms linear;}
 .mini-btn{background:#111128;border:1px solid #222;color:#555;font-size:.7rem;padding:.3rem .8rem;border-radius:6px;cursor:pointer;margin-top:.3rem;}
 .mini-btn:hover{color:#aaa;}
-.fps-badge{color:#1e1e3a;font-size:.7rem;font-family:monospace;letter-spacing:.5px;}
+.fps-badge{color:#1e1e3a;font-size:.7rem;font-family:monospace;}
 </style>
 </head>
 <body>
@@ -53,10 +50,6 @@ body{background:#07070f;color:#fff;font-family:'Segoe UI',sans-serif;height:100v
 <div class="screen active" id="sWelcome">
   <div class="logo">✦ AmbiSync</div>
   <div class="tagline">Ekran kenar renklerini ikinci cihazına anlık yansıt</div>
-  <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:1.8rem;">
-    <label style="color:#444;font-size:.75rem;">Sunucu:</label>
-    <input class="ws-inp" id="wsUrl" value="ws://localhost:8765" style="width:220px;">
-  </div>
   <div class="cards">
     <div class="card" onclick="initSource()">
       <div class="card-icon">🖥️</div>
@@ -90,7 +83,8 @@ body{background:#07070f;color:#fff;font-family:'Segoe UI',sans-serif;height:100v
     <div style="font-size:2.2rem;margin-bottom:.4rem;">📱</div>
     <h2 style="font-size:1.1rem;margin-bottom:.4rem;">İkinci Cihaz</h2>
     <p style="color:#555;font-size:.8rem;margin-bottom:.5rem;">Ana cihazdaki 6 haneli kodu gir</p>
-    <input class="inp" id="codeInp" maxlength="6" placeholder="A3F9C1" oninput="this.value=this.value.toUpperCase().replace(/[^A-F0-9]/g,'')">
+    <input class="inp" id="codeInp" maxlength="6" placeholder="A3F9C1"
+           oninput="this.value=this.value.toUpperCase().replace(/[^A-F0-9]/g,'')">
     <button class="btn" onclick="joinRoom()" style="width:100%">Bağlan</button>
     <div class="status" id="dispStatus"></div>
   </div>
@@ -112,27 +106,33 @@ body{background:#07070f;color:#fff;font-family:'Segoe UI',sans-serif;height:100v
 </div>
 
 <script>
-/* ─────────── CONFIG ─────────── */
-const SEG    = 16;   // segments per edge
-const DEPTH  = 0.03; // fraction of dimension to sample (3%)
-const ICE_CFG = [{ urls: 'stun:stun.l.google.com:19302' }];
+/* ── CONFIG ── */
+const SEG   = 16;
+const DEPTH = 0.03;
+const ICE_CFG = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' }
+];
 
-/* ─────────── STATE ─────────── */
+// Otomatik WSS/WS seçimi – Render'da wss, lokalde ws
+const WS_URL = (() => {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${proto}://${location.host}`;
+})();
+
+/* ── STATE ── */
 let ws=null, pc=null, dc=null, stream=null, rafId=null;
-let role=''; // 'source' | 'display'
-let lastTs=0, frameCount=0, fpsTs=0;
+let role='', lastTs=0, frameCount=0, fpsTs=0;
 
-/* ─────────── UTILS ─────────── */
+/* ── UTILS ── */
 const $ = id => document.getElementById(id);
 function show(id){ document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active')); $(id).classList.add('active'); }
 function setStatus(id,txt,cls=''){const el=$(id);el.textContent=txt;el.className='status '+(cls||'');}
 
-/* ─────────── CLEANUP ─────────── */
+/* ── CLEANUP ── */
 function goHome(){
-  cleanup();
-  show('sWelcome');
+  cleanup(); show('sWelcome');
 }
-
 function cleanup(){
   if(rafId){ cancelAnimationFrame(rafId); rafId=null; }
   if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
@@ -141,71 +141,59 @@ function cleanup(){
   if(ws){ try{ws.close();}catch(e){} ws=null; }
 }
 
-/* ─────────── WEBSOCKET SIGNAL ─────────── */
+/* ── WEBSOCKET ── */
 function openWS(onOpen){
-  const url = $('wsUrl').value.trim();
-  ws = new WebSocket(url);
+  ws = new WebSocket(WS_URL);
   ws.onopen  = onOpen;
-  ws.onerror = ()=>{ alert('Sunucuya bağlanılamadı: '+url); goHome(); };
+  ws.onerror = ()=>{ alert('Sunucuya bağlanılamadı:\n'+WS_URL); goHome(); };
   ws.onmessage = e => handleSignal(JSON.parse(e.data));
 }
-
 function send(obj){ if(ws&&ws.readyState===1) ws.send(JSON.stringify(obj)); }
 
 async function handleSignal(msg){
   switch(msg.type){
-
     case 'created':
       $('srcCode').textContent = msg.code;
       setStatus('srcStatus','İkinci cihazın bağlanması bekleniyor…');
       break;
-
     case 'joined':
       if(role==='display'){
         setStatus('dispStatus','Bağlandı! Ambilight başlıyor…','ok');
-        setTimeout(()=>{ buildEdges(); show('sAmbi'); },500);
+        setTimeout(()=>{ buildEdges(); show('sAmbi'); }, 400);
       }
       break;
-
-    case 'peer_joined': // source side → create offer
+    case 'peer_joined':
       await createOffer();
       break;
-
     case 'offer':
       await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
       const ans = await pc.createAnswer();
       await pc.setLocalDescription(ans);
-      send({ type:'answer', sdp: ans });
+      send({ type:'answer', sdp:ans });
       break;
-
     case 'answer':
       await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
       break;
-
     case 'ice':
       if(msg.candidate) await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
       break;
-
     case 'peer_left':
-      goHome();
-      break;
-
+      goHome(); break;
     case 'error':
-      alert(msg.msg);
-      break;
+      alert(msg.msg); break;
   }
 }
 
-/* ─────────── WebRTC COMMON ─────────── */
+/* ── WebRTC COMMON ── */
 function createPC(){
   pc = new RTCPeerConnection({ iceServers: ICE_CFG });
-  pc.onicecandidate = e => { if(e.candidate) send({ type:'ice', candidate: e.candidate }); };
+  pc.onicecandidate = e => { if(e.candidate) send({ type:'ice', candidate:e.candidate }); };
   pc.onconnectionstatechange = () => {
     if(pc.connectionState==='failed'||pc.connectionState==='disconnected') goHome();
   };
 }
 
-/* ─────────── SOURCE ─────────── */
+/* ── SOURCE ── */
 function initSource(){
   role='source';
   show('sSource');
@@ -216,11 +204,11 @@ function initSource(){
   openWS(()=>{
     send({ type:'create' });
     createPC();
-    // Create unreliable, unordered data channel → UDP-like, minimum latency
+    // UDP-like: ordered=false, maxRetransmits=0 → minimum gecikme
     dc = pc.createDataChannel('ambi',{ ordered:false, maxRetransmits:0 });
     dc.binaryType='arraybuffer';
     dc.onopen = ()=>{
-      setStatus('srcStatus','✓ DataChannel açık! Yakalamayı başlat.','ok');
+      setStatus('srcStatus','✓ Bağlantı kuruldu! Yakalamayı başlatabilirsin.','ok');
       $('captureBtn').disabled=false;
     };
   });
@@ -229,7 +217,7 @@ function initSource(){
 async function createOffer(){
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
-  send({ type:'offer', sdp: offer });
+  send({ type:'offer', sdp:offer });
 }
 
 async function startCapture(){
@@ -237,7 +225,7 @@ async function startCapture(){
     stream = await navigator.mediaDevices.getDisplayMedia({ video:{ frameRate:{ideal:60}, cursor:'never' } });
   }catch(e){ alert('Ekran seçilmedi veya izin reddedildi.'); return; }
 
-  const vid = document.createElement('video');
+  const vid=document.createElement('video');
   vid.srcObject=stream; vid.play();
   const cv=$('cv'), cx=cv.getContext('2d',{ willReadFrequently:true });
 
@@ -247,17 +235,15 @@ async function startCapture(){
 
   vid.onloadedmetadata=()=>{
     cv.width=vid.videoWidth; cv.height=vid.videoHeight;
-
     const loop = ts => {
-      if(!stream){ return; }
-      rafId = requestAnimationFrame(loop);
-      // Throttle to ~60fps max
-      if(ts - lastTs < 14) return;
+      if(!stream) return;
+      rafId=requestAnimationFrame(loop);
+      if(ts-lastTs < 14) return; // ~60fps cap
       lastTs=ts;
       cx.drawImage(vid,0,0);
       if(dc&&dc.readyState==='open') dc.send(sampleEdges(cv,cx));
     };
-    rafId = requestAnimationFrame(loop);
+    rafId=requestAnimationFrame(loop);
   };
 }
 
@@ -268,55 +254,36 @@ function stopCapture(){
   $('captureBtn').onclick=startCapture;
 }
 
-/* Binary protocol: 4 edges × SEG × 3 bytes = SEG*12 bytes total */
-function sampleEdges(cv, cx){
+/* Binary: 4 × SEG × 3 bytes = 192 bytes/frame */
+function sampleEdges(cv,cx){
   const w=cv.width, h=cv.height;
-  const dw=Math.max(4, Math.round(h*DEPTH));
-  const dh=Math.max(4, Math.round(w*DEPTH));
+  const dw=Math.max(4,Math.round(w*DEPTH));
+  const dh=Math.max(4,Math.round(h*DEPTH));
   const sw=Math.floor(w/SEG), sh=Math.floor(h/SEG);
-  const buf = new Uint8Array(SEG*12);
-  let off=0;
-
-  for(let i=0;i<SEG;i++){
-    // Top
-    let [r,g,b]=avgPixels(cx,i*sw,0,sw,dh);
-    buf[off++]=r;buf[off++]=g;buf[off++]=b;
-  }
-  for(let i=0;i<SEG;i++){
-    // Bottom
-    let [r,g,b]=avgPixels(cx,i*sw,h-dh,sw,dh);
-    buf[off++]=r;buf[off++]=g;buf[off++]=b;
-  }
-  for(let i=0;i<SEG;i++){
-    // Left
-    let [r,g,b]=avgPixels(cx,0,i*sh,dw,sh);
-    buf[off++]=r;buf[off++]=g;buf[off++]=b;
-  }
-  for(let i=0;i<SEG;i++){
-    // Right
-    let [r,g,b]=avgPixels(cx,w-dw,i*sh,dw,sh);
-    buf[off++]=r;buf[off++]=g;buf[off++]=b;
-  }
+  const buf=new Uint8Array(SEG*12); let off=0;
+  for(let i=0;i<SEG;i++){ let[r,g,b]=avg(cx,i*sw,0,sw,dh);       buf[off++]=r;buf[off++]=g;buf[off++]=b; } // top
+  for(let i=0;i<SEG;i++){ let[r,g,b]=avg(cx,i*sw,h-dh,sw,dh);    buf[off++]=r;buf[off++]=g;buf[off++]=b; } // bottom
+  for(let i=0;i<SEG;i++){ let[r,g,b]=avg(cx,0,i*sh,dw,sh);        buf[off++]=r;buf[off++]=g;buf[off++]=b; } // left
+  for(let i=0;i<SEG;i++){ let[r,g,b]=avg(cx,w-dw,i*sh,dw,sh);    buf[off++]=r;buf[off++]=g;buf[off++]=b; } // right
   return buf.buffer;
 }
 
-function avgPixels(cx,x,y,w,h){
+function avg(cx,x,y,w,h){
   const d=cx.getImageData(x,y,w,h).data;
   let r=0,g=0,b=0,n=d.length>>2;
-  for(let i=0;i<d.length;i+=4){ r+=d[i];g+=d[i+1];b+=d[i+2]; }
-  return [r/n|0, g/n|0, b/n|0];
+  for(let i=0;i<d.length;i+=4){r+=d[i];g+=d[i+1];b+=d[i+2];}
+  return[r/n|0,g/n|0,b/n|0];
 }
 
-/* ─────────── DISPLAY ─────────── */
+/* ── DISPLAY ── */
 function initDisplay(){
   role='display';
   show('sConnect');
   setStatus('dispStatus','');
-
   openWS(()=>{
     createPC();
     pc.ondatachannel = e => {
-      dc = e.channel;
+      dc=e.channel;
       dc.binaryType='arraybuffer';
       dc.onmessage = ev => paintAmbi(new Uint8Array(ev.data));
     };
@@ -335,31 +302,24 @@ function buildEdges(){
     const el=$(id); el.innerHTML='';
     for(let i=0;i<SEG;i++){
       const s=document.createElement('div');
-      s.className='seg'; s.id=id+'_'+i;
-      el.appendChild(s);
+      s.className='seg'; s.id=id+'_'+i; el.appendChild(s);
     }
   });
 }
 
 function paintAmbi(arr){
   const edges=[['eTop',0],['eBottom',SEG],['eLeft',SEG*2],['eRight',SEG*3]];
-  for(const [id,base] of edges){
+  for(const[id,base]of edges){
     for(let i=0;i<SEG;i++){
-      const o=(base+i)*3;
-      const r=arr[o],g=arr[o+1],b=arr[o+2];
-      const el=$(id+'_'+i);
-      if(!el) continue;
+      const o=(base+i)*3, r=arr[o], g=arr[o+1], b=arr[o+2];
+      const el=$(id+'_'+i); if(!el) continue;
       el.style.backgroundColor=`rgb(${r},${g},${b})`;
       el.style.boxShadow=`0 0 35px 10px rgba(${r},${g},${b},.7)`;
     }
   }
-  // FPS counter
   frameCount++;
   const now=performance.now();
-  if(now-fpsTs>1000){
-    $('fpsBadge').textContent=`${frameCount} fps`;
-    frameCount=0; fpsTs=now;
-  }
+  if(now-fpsTs>1000){ $('fpsBadge').textContent=`${frameCount} fps`; frameCount=0; fpsTs=now; }
 }
 </script>
 </body>
